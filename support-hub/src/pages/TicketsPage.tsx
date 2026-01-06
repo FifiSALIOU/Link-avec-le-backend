@@ -26,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Search,
   Filter,
@@ -50,14 +50,16 @@ import { fr } from "date-fns/locale";
 
 const statusFilters: { value: TicketStatus | "all"; label: string }[] = [
   { value: "all", label: "Tous" },
-  { value: "open", label: "Ouverts" },
-  { value: "assigned", label: "Assignés" },
+  { value: "open", label: "En attente d'assignation" },
+  { value: "assigned", label: "Assignés au technicien" },
   { value: "in_progress", label: "En cours" },
   { value: "resolved", label: "Résolus" },
-  { value: "reopened", label: "Relancés" },
+  { value: "reopened", label: "Rejetés" },
+  { value: "closed", label: "Cloturés" },
 ];
 
 export default function TicketsPage() {
+  const navigate = useNavigate();
   const { tickets, currentUser, users, setTickets, addNotification, loadData } = useApp();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TicketStatus | "all">("all");
@@ -65,12 +67,25 @@ export default function TicketsPage() {
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | "all">("all");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showReassignModal, setShowReassignModal] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
+  const [showEscalateModal, setShowEscalateModal] = useState(false);
   const [showReopenModal, setShowReopenModal] = useState(false);
+  const [showValidateModal, setShowValidateModal] = useState(false);
+  const [showResolveModal, setShowResolveModal] = useState(false);
+  const [showTakeChargeModal, setShowTakeChargeModal] = useState(false);
+  const [showCommentModal, setShowCommentModal] = useState(false);
+  const [showRequestInfoModal, setShowRequestInfoModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
+  const [validationReason, setValidationReason] = useState("");
+  const [isValidationAccepted, setIsValidationAccepted] = useState(true);
+  const [resolutionSummary, setResolutionSummary] = useState("");
+  const [commentContent, setCommentContent] = useState("");
+  const [commentType, setCommentType] = useState<"public" | "internal">("public");
+  const [requestInfoContent, setRequestInfoContent] = useState("");
+  const [assignNotes, setAssignNotes] = useState("");
   const [selectedTechnician, setSelectedTechnician] = useState("");
   
   // État pour l'édition
@@ -139,84 +154,283 @@ export default function TicketsPage() {
   const technicians = users.filter(u => u.role === "technician");
   const adjoint = users.find(u => u.role === "adjoint");
 
-  const handleAssign = () => {
-    if (!selectedTicket || !selectedTechnician) return;
-
-    const technician = users.find(u => u.id === selectedTechnician);
-    if (!technician) return;
-
-    setTickets(prev =>
-      prev.map(t =>
-        t.id === selectedTicket.id
-          ? { ...t, status: "assigned" as TicketStatus, assignedTo: technician, updatedAt: new Date() }
-          : t
-      )
-    );
-
-    addNotification({
-      title: "Ticket assigné",
-      message: `Le ticket ${selectedTicket.id} a été assigné à ${technician.name}`,
-      type: "info",
-      read: false,
-      ticketId: selectedTicket.id,
-    });
-
-    toast.success("Ticket assigné avec succès");
-    setShowAssignModal(false);
-    setSelectedTicket(null);
-    setSelectedTechnician("");
-  };
-
-  const handleDelegate = () => {
-    if (!selectedTicket || !adjoint) return;
-
-    setTickets(prev =>
-      prev.map(t =>
-        t.id === selectedTicket.id
-          ? { ...t, status: "delegated" as TicketStatus, delegatedTo: adjoint, updatedAt: new Date() }
-          : t
-      )
-    );
-
-    addNotification({
-      title: "Ticket délégué",
-      message: `Le ticket ${selectedTicket.id} a été délégué à ${adjoint.name}`,
-      type: "info",
-      read: false,
-      ticketId: selectedTicket.id,
-    });
-
-    toast.success("Ticket délégué avec succès");
-    setShowDelegateModal(false);
-    setSelectedTicket(null);
-  };
-
-  const handleReopen = () => {
-    if (!selectedTicket || !reopenReason.trim()) {
-      toast.error("Veuillez saisir un motif de relance");
+  const handleAssign = async () => {
+    if (!selectedTicket || !selectedTechnician) {
+      toast.error("Veuillez sélectionner un technicien");
       return;
     }
 
-    setTickets(prev =>
-      prev.map(t =>
-        t.id === selectedTicket.id
-          ? { ...t, status: "reopened" as TicketStatus, reopenReason, updatedAt: new Date() }
-          : t
-      )
-    );
+    try {
+      const updatedTicket = await ticketsApi.assign(
+        selectedTicket.id,
+        selectedTechnician,
+        undefined,
+        assignNotes || undefined
+      );
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
 
-    addNotification({
-      title: "Ticket relancé",
-      message: `Le ticket ${selectedTicket.id} a été relancé: ${reopenReason}`,
-      type: "warning",
-      read: false,
-      ticketId: selectedTicket.id,
-    });
+      toast.success("Ticket assigné avec succès");
+      setShowAssignModal(false);
+      setSelectedTicket(null);
+      setSelectedTechnician("");
+      setAssignNotes("");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de l\'assignation:', error);
+      toast.error(error.message || "Erreur lors de l'assignation du ticket");
+    }
+  };
 
-    toast.success("Ticket relancé avec succès");
-    setShowReopenModal(false);
-    setSelectedTicket(null);
-    setReopenReason("");
+  const handleReassign = async () => {
+    if (!selectedTicket || !selectedTechnician) {
+      toast.error("Veuillez sélectionner un technicien");
+      return;
+    }
+
+    try {
+      const updatedTicket = await ticketsApi.reassign(
+        selectedTicket.id,
+        selectedTechnician,
+        undefined,
+        assignNotes || undefined
+      );
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Ticket réassigné avec succès");
+      setShowReassignModal(false);
+      setSelectedTicket(null);
+      setSelectedTechnician("");
+      setAssignNotes("");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la réassignation:', error);
+      toast.error(error.message || "Erreur lors de la réassignation du ticket");
+    }
+  };
+
+  const handleDelegate = async () => {
+    if (!selectedTicket || !adjoint) {
+      toast.error("Adjoint DSI non trouvé");
+      return;
+    }
+
+    try {
+      const updatedTicket = await ticketsApi.delegate(
+        selectedTicket.id,
+        adjoint.id,
+        undefined,
+        assignNotes || undefined
+      );
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Ticket délégué avec succès");
+      setShowDelegateModal(false);
+      setSelectedTicket(null);
+      setAssignNotes("");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la délégation:', error);
+      toast.error(error.message || "Erreur lors de la délégation du ticket");
+    }
+  };
+
+  const handleEscalate = async () => {
+    if (!selectedTicket) return;
+
+    try {
+      const updatedTicket = await ticketsApi.escalate(selectedTicket.id);
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Priorité du ticket escaladée avec succès");
+      setShowEscalateModal(false);
+      setSelectedTicket(null);
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de l\'escalade:', error);
+      toast.error(error.message || "Erreur lors de l'escalade du ticket");
+    }
+  };
+
+  const handleReopen = async () => {
+    if (!selectedTicket) return;
+
+    try {
+      // Réouverture par l'utilisateur (pas de technicien fourni)
+      const updatedTicket = await ticketsApi.reopen(selectedTicket.id);
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Ticket relancé avec succès");
+      setShowReopenModal(false);
+      setSelectedTicket(null);
+      setReopenReason("");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la relance:', error);
+      toast.error(error.message || "Erreur lors de la relance du ticket");
+    }
+  };
+
+  const handleValidate = async () => {
+    if (!selectedTicket) return;
+
+    try {
+      const rejectionReason = !isValidationAccepted && validationReason.trim() 
+        ? validationReason 
+        : undefined;
+      
+      const updatedTicket = await ticketsApi.validate(
+        selectedTicket.id,
+        isValidationAccepted,
+        rejectionReason
+      );
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success(isValidationAccepted ? "Résolution validée avec succès" : "Résolution rejetée");
+      setShowValidateModal(false);
+      setSelectedTicket(null);
+      setValidationReason("");
+      setIsValidationAccepted(true);
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la validation:', error);
+      toast.error(error.message || "Erreur lors de la validation");
+    }
+  };
+
+  const handleResolve = async () => {
+    if (!selectedTicket || !resolutionSummary.trim()) {
+      toast.error("Veuillez saisir un résumé de la résolution");
+      return;
+    }
+
+    try {
+      const updatedTicket = await ticketsApi.resolve(selectedTicket.id, resolutionSummary);
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Ticket marqué comme résolu");
+      setShowResolveModal(false);
+      setSelectedTicket(null);
+      setResolutionSummary("");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la résolution:', error);
+      toast.error(error.message || "Erreur lors de la résolution du ticket");
+    }
+  };
+
+  const handleTakeCharge = async () => {
+    if (!selectedTicket) return;
+
+    try {
+      const updatedTicket = await ticketsApi.updateStatus(
+        selectedTicket.id,
+        "en_cours"
+      );
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Ticket pris en charge");
+      setShowTakeChargeModal(false);
+      setSelectedTicket(null);
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la prise en charge:', error);
+      toast.error(error.message || "Erreur lors de la prise en charge");
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!selectedTicket || !commentContent.trim()) {
+      toast.error("Veuillez saisir un commentaire");
+      return;
+    }
+
+    try {
+      await ticketsApi.addComment(selectedTicket.id, commentContent, commentType);
+      
+      toast.success("Commentaire ajouté avec succès");
+      setShowCommentModal(false);
+      setSelectedTicket(null);
+      setCommentContent("");
+      setCommentType("public");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de l\'ajout du commentaire:', error);
+      toast.error(error.message || "Erreur lors de l'ajout du commentaire");
+    }
+  };
+
+  const handleRequestInfo = async () => {
+    if (!selectedTicket || !requestInfoContent.trim()) {
+      toast.error("Veuillez saisir votre demande");
+      return;
+    }
+
+    try {
+      await ticketsApi.addComment(selectedTicket.id, requestInfoContent, "internal");
+      
+      toast.success("Demande d'information envoyée");
+      setShowRequestInfoModal(false);
+      setSelectedTicket(null);
+      setRequestInfoContent("");
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la demande d\'information:', error);
+      toast.error(error.message || "Erreur lors de la demande d'information");
+    }
   };
 
   const handleEdit = async () => {
@@ -264,7 +478,28 @@ export default function TicketsPage() {
       }
     } catch (error: any) {
       console.error('Erreur lors de la modification du ticket:', error);
-      toast.error(error.message || "Erreur lors de la modification du ticket");
+      
+      // Gestion des erreurs spécifiques du backend
+      let errorMessage = "Erreur lors de la modification du ticket";
+      if (error.response?.data?.detail) {
+        const detail = error.response.data.detail;
+        if (detail.includes("en cours de traitement")) {
+          // Déterminer un message plus spécifique selon le statut
+          if (selectedTicket.status === "closed") {
+            errorMessage = "Ce ticket est déjà clôturé. Modification impossible.";
+          } else if (selectedTicket.status === "resolved") {
+            errorMessage = "Ce ticket est déjà résolu. Modification impossible.";
+          } else if (selectedTicket.assignedTo || selectedTicket.status === "assigned" || selectedTicket.status === "in_progress") {
+            errorMessage = "Ce ticket est déjà assigné. Modification impossible.";
+          } else {
+            errorMessage = "Ce ticket est déjà en cours de traitement. Modification impossible.";
+          }
+        } else {
+          errorMessage = detail;
+        }
+      }
+      
+      toast.error(errorMessage);
     }
   };
 
@@ -286,7 +521,28 @@ export default function TicketsPage() {
       }
     } catch (error: any) {
       console.error('Erreur lors de la suppression du ticket:', error);
-      toast.error(error.message || "Erreur lors de la suppression du ticket");
+      
+      // Gestion des erreurs spécifiques du backend
+      let errorMessage = "Erreur lors de la suppression du ticket";
+      if (error.response?.data?.detail) {
+        const detail = error.response.data.detail;
+        if (detail.includes("en cours de traitement")) {
+          // Déterminer un message plus spécifique selon le statut
+          if (selectedTicket.status === "closed") {
+            errorMessage = "Ce ticket est déjà clôturé. Suppression impossible.";
+          } else if (selectedTicket.status === "resolved") {
+            errorMessage = "Ce ticket est déjà résolu. Suppression impossible.";
+          } else if (selectedTicket.assignedTo || selectedTicket.status === "assigned" || selectedTicket.status === "in_progress") {
+            errorMessage = "Ce ticket est déjà assigné. Suppression impossible.";
+          } else {
+            errorMessage = "Ce ticket est déjà en cours de traitement. Suppression impossible.";
+          }
+        } else {
+          errorMessage = detail;
+        }
+      }
+      
+      toast.error(errorMessage);
     }
   };
 
@@ -396,20 +652,47 @@ export default function TicketsPage() {
                 key={ticket.id}
                 ticket={ticket}
                 onView={(t) => {
-                  setSelectedTicket(t);
-                  setShowDetailsModal(true);
+                  navigate(`/tickets/${t.id}`);
                 }}
                 onAssign={(t) => {
                   setSelectedTicket(t);
                   setShowAssignModal(true);
                 }}
+                onReassign={(t) => {
+                  setSelectedTicket(t);
+                  setShowReassignModal(true);
+                }}
                 onDelegate={(t) => {
                   setSelectedTicket(t);
                   setShowDelegateModal(true);
                 }}
+                onEscalate={(t) => {
+                  setSelectedTicket(t);
+                  setShowEscalateModal(true);
+                }}
+                onResolve={(t) => {
+                  setSelectedTicket(t);
+                  setShowResolveModal(true);
+                }}
+                onValidate={(t) => {
+                  setSelectedTicket(t);
+                  setShowValidateModal(true);
+                }}
                 onReopen={(t) => {
                   setSelectedTicket(t);
                   setShowReopenModal(true);
+                }}
+                onTakeCharge={(t) => {
+                  setSelectedTicket(t);
+                  setShowTakeChargeModal(true);
+                }}
+                onAddComment={(t) => {
+                  setSelectedTicket(t);
+                  setShowCommentModal(true);
+                }}
+                onRequestInfo={(t) => {
+                  setSelectedTicket(t);
+                  setShowRequestInfoModal(true);
                 }}
                 onEdit={openEditModal}
                 onDelete={openDeleteModal}
@@ -476,12 +759,93 @@ export default function TicketsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="assign-notes">Notes (optionnel)</Label>
+                <Textarea
+                  id="assign-notes"
+                  placeholder="Instructions spéciales pour le technicien..."
+                  value={assignNotes}
+                  onChange={(e) => setAssignNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowAssignModal(false)}>
+                <Button variant="outline" onClick={() => {
+                  setShowAssignModal(false);
+                  setAssignNotes("");
+                }}>
                   Annuler
                 </Button>
                 <Button onClick={handleAssign} className="bg-secondary hover:bg-secondary/90">
                   Assigner
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Reassign Modal */}
+        <Dialog open={showReassignModal} onOpenChange={setShowReassignModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Réassigner le ticket</DialogTitle>
+              <DialogDescription>
+                Sélectionnez un nouveau technicien pour réassigner le ticket {selectedTicket?.id}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Technicien actuel</Label>
+                {selectedTicket?.assignedTo && (
+                  <div className="flex items-center gap-2 p-2 bg-muted rounded">
+                    <Avatar className="h-6 w-6">
+                      <AvatarFallback className="text-xs">{selectedTicket.assignedTo.avatar}</AvatarFallback>
+                    </Avatar>
+                    <span>{selectedTicket.assignedTo.name}</span>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>Nouveau technicien</Label>
+                <Select value={selectedTechnician} onValueChange={setSelectedTechnician}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner un technicien" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {technicians
+                      .filter(t => t.id !== selectedTicket?.assignedTo?.id && t.specialization === selectedTicket?.type)
+                      .map((tech) => (
+                        <SelectItem key={tech.id} value={tech.id}>
+                          <div className="flex items-center gap-2">
+                            <Avatar className="h-6 w-6">
+                              <AvatarFallback className="text-xs">{tech.avatar}</AvatarFallback>
+                            </Avatar>
+                            {tech.name}
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reassign-notes">Notes (optionnel)</Label>
+                <Textarea
+                  id="reassign-notes"
+                  placeholder="Raison de la réassignation..."
+                  value={assignNotes}
+                  onChange={(e) => setAssignNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowReassignModal(false);
+                  setAssignNotes("");
+                }}>
+                  Annuler
+                </Button>
+                <Button onClick={handleReassign} className="bg-secondary hover:bg-secondary/90">
+                  Réassigner
                 </Button>
               </div>
             </div>
@@ -509,12 +873,63 @@ export default function TicketsPage() {
                   </div>
                 </div>
               )}
+              <div className="space-y-2">
+                <Label htmlFor="delegate-notes">Notes (optionnel)</Label>
+                <Textarea
+                  id="delegate-notes"
+                  placeholder="Instructions pour l'Adjoint DSI..."
+                  value={assignNotes}
+                  onChange={(e) => setAssignNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowDelegateModal(false)}>
+                <Button variant="outline" onClick={() => {
+                  setShowDelegateModal(false);
+                  setAssignNotes("");
+                }}>
                   Annuler
                 </Button>
                 <Button onClick={handleDelegate} className="bg-secondary hover:bg-secondary/90">
                   Déléguer
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Escalate Modal */}
+        <Dialog open={showEscalateModal} onOpenChange={setShowEscalateModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Escalader la priorité</DialogTitle>
+              <DialogDescription>
+                La priorité du ticket {selectedTicket?.id} sera augmentée. Êtes-vous sûr ?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-warning/10 rounded-lg border border-warning/20">
+                <p className="text-sm">
+                  <strong>Priorité actuelle:</strong>{" "}
+                  {selectedTicket?.priority === "low" && "Basse"}
+                  {selectedTicket?.priority === "medium" && "Moyenne"}
+                  {selectedTicket?.priority === "high" && "Haute"}
+                  {selectedTicket?.priority === "critical" && "Critique"}
+                </p>
+                <p className="text-sm mt-2">
+                  <strong>Nouvelle priorité:</strong>{" "}
+                  {selectedTicket?.priority === "low" && "Moyenne"}
+                  {selectedTicket?.priority === "medium" && "Haute"}
+                  {selectedTicket?.priority === "high" && "Critique"}
+                  {selectedTicket?.priority === "critical" && "Déjà maximale"}
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowEscalateModal(false)}>
+                  Annuler
+                </Button>
+                <Button onClick={handleEscalate} className="bg-warning hover:bg-warning/90">
+                  Escalader
                 </Button>
               </div>
             </div>
@@ -641,220 +1056,232 @@ export default function TicketsPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Details Modal */}
-        <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        {/* Validate Modal */}
+        <Dialog open={showValidateModal} onOpenChange={setShowValidateModal}>
+          <DialogContent>
             <DialogHeader>
-              <DialogTitle>Détails du ticket</DialogTitle>
+              <DialogTitle>Valider la résolution</DialogTitle>
               <DialogDescription>
-                Informations complètes du ticket {selectedTicket?.id}
+                Votre ticket {selectedTicket?.id} a été résolu. Validez-vous la résolution ?
               </DialogDescription>
             </DialogHeader>
-            {selectedTicket && (
-              <div className="space-y-6">
-                {/* Header */}
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <h2 className="text-2xl font-bold mb-2">{selectedTicket.title}</h2>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="outline" className={cn(
-                        selectedTicket.status === "open" && "bg-info/10 text-info border-info/30",
-                        selectedTicket.status === "assigned" && "bg-secondary/10 text-secondary border-secondary/30",
-                        selectedTicket.status === "in_progress" && "bg-primary/10 text-primary border-primary/30",
-                        selectedTicket.status === "resolved" && "bg-success/10 text-success border-success/30",
-                        selectedTicket.status === "closed" && "bg-muted text-muted-foreground border-muted",
-                        selectedTicket.status === "reopened" && "bg-destructive/10 text-destructive border-destructive/30",
-                      )}>
-                        {selectedTicket.status === "open" && "Ouvert"}
-                        {selectedTicket.status === "assigned" && "Assigné"}
-                        {selectedTicket.status === "in_progress" && "En cours"}
-                        {selectedTicket.status === "resolved" && "Résolu"}
-                        {selectedTicket.status === "closed" && "Fermé"}
-                        {selectedTicket.status === "reopened" && "Relancé"}
-                      </Badge>
-                      <Badge variant="secondary" className={cn(
-                        selectedTicket.priority === "low" && "bg-muted text-muted-foreground",
-                        selectedTicket.priority === "medium" && "bg-info/10 text-info",
-                        selectedTicket.priority === "high" && "bg-warning/10 text-warning",
-                        selectedTicket.priority === "critical" && "bg-destructive/10 text-destructive",
-                      )}>
-                        {selectedTicket.priority === "low" && "Basse"}
-                        {selectedTicket.priority === "medium" && "Moyenne"}
-                        {selectedTicket.priority === "high" && "Haute"}
-                        {selectedTicket.priority === "critical" && "Critique"}
-                      </Badge>
-                      <Badge variant="outline">
-                        {selectedTicket.type === "hardware" ? (
-                          <><Wrench className="h-3 w-3 mr-1" /> Matériel</>
-                        ) : (
-                          <><Monitor className="h-3 w-3 mr-1" /> Applicatif</>
-                        )}
-                      </Badge>
-                      {selectedTicket.category && (
-                        <Badge variant="outline">{selectedTicket.category}</Badge>
-                      )}
-                    </div>
-                  </div>
+            <div className="space-y-4">
+              {selectedTicket?.resolution && (
+                <div className="p-4 bg-success/10 rounded-lg border border-success/20">
+                  <p className="font-medium mb-2">Résumé de la résolution:</p>
+                  <p className="text-sm">{selectedTicket.resolution}</p>
                 </div>
-
-                {/* Description */}
-                <div className="space-y-2">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4" />
-                    Description
-                  </h3>
-                  <p className="text-muted-foreground bg-muted/50 p-4 rounded-lg">
-                    {selectedTicket.description}
-                  </p>
-                </div>
-
-                {/* Informations */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <User className="h-4 w-4" />
-                      Créé par
-                    </h3>
-                    <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback>{selectedTicket.createdBy.avatar}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-medium">{selectedTicket.createdBy.name}</p>
-                        <p className="text-sm text-muted-foreground">{selectedTicket.createdBy.email}</p>
-                      </div>
-                    </div>
-                  </div>
-                  {selectedTicket.assignedTo && (
-                    <div className="space-y-2">
-                      <h3 className="font-semibold flex items-center gap-2">
-                        <User className="h-4 w-4" />
-                        Assigné à
-                      </h3>
-                      <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback>{selectedTicket.assignedTo.avatar}</AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="font-medium">{selectedTicket.assignedTo.name}</p>
-                          <p className="text-sm text-muted-foreground">{selectedTicket.assignedTo.email}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Dates */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <Calendar className="h-4 w-4" />
-                      Dates importantes
-                    </h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between p-2 bg-muted/50 rounded">
-                        <span className="text-muted-foreground">Créé le:</span>
-                        <span className="font-medium">{format(selectedTicket.createdAt, "dd/MM/yyyy à HH:mm", { locale: fr })}</span>
-                      </div>
-                      <div className="flex justify-between p-2 bg-muted/50 rounded">
-                        <span className="text-muted-foreground">Modifié le:</span>
-                        <span className="font-medium">{format(selectedTicket.updatedAt, "dd/MM/yyyy à HH:mm", { locale: fr })}</span>
-                      </div>
-                      {selectedTicket.resolvedAt && (
-                        <div className="flex justify-between p-2 bg-muted/50 rounded">
-                          <span className="text-muted-foreground">Résolu le:</span>
-                          <span className="font-medium">{format(selectedTicket.resolvedAt, "dd/MM/yyyy à HH:mm", { locale: fr })}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Résolution */}
-                {selectedTicket.resolution && (
-                  <div className="space-y-2">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-success" />
-                      Résolution
-                    </h3>
-                    <p className="text-muted-foreground bg-success/10 p-4 rounded-lg border border-success/20">
-                      {selectedTicket.resolution}
-                    </p>
-                  </div>
-                )}
-
-                {/* Raison de rejet */}
-                {selectedTicket.reopenReason && (
-                  <div className="space-y-2">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-warning" />
-                      Raison de relance
-                    </h3>
-                    <p className="text-muted-foreground bg-warning/10 p-4 rounded-lg border border-warning/20">
-                      {selectedTicket.reopenReason}
-                    </p>
-                  </div>
-                )}
-
-                {/* Commentaires */}
-                {selectedTicket.comments && selectedTicket.comments.length > 0 && (
-                  <div className="space-y-2">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <MessageSquare className="h-4 w-4" />
-                      Commentaires ({selectedTicket.comments.length})
-                    </h3>
-                    <div className="space-y-3 max-h-60 overflow-y-auto">
-                      {selectedTicket.comments.map((comment) => (
-                        <div key={comment.id} className="p-3 bg-muted/50 rounded-lg">
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-6 w-6">
-                                <AvatarFallback className="text-xs">{comment.author.avatar}</AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <p className="font-medium text-sm">{comment.author.name}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {format(comment.createdAt, "dd/MM/yyyy à HH:mm", { locale: fr })}
-                                </p>
-                              </div>
-                            </div>
-                            {comment.isInternal && (
-                              <Badge variant="outline" className="text-xs">Interne</Badge>
-                            )}
-                          </div>
-                          <p className="text-sm">{comment.content}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex justify-end gap-2 pt-4 border-t">
-                  <Button variant="outline" onClick={() => setShowDetailsModal(false)}>
-                    Fermer
+              )}
+              <div className="space-y-2">
+                <Label>Action</Label>
+                <div className="flex gap-4">
+                  <Button
+                    variant={isValidationAccepted ? "default" : "outline"}
+                    onClick={() => setIsValidationAccepted(true)}
+                    className="flex-1"
+                  >
+                    Valider
                   </Button>
-                  {currentUser?.id === selectedTicket.createdBy.id && 
-                   selectedTicket.status === "open" && 
-                   !selectedTicket.assignedTo && (
-                    <>
-                      <Button variant="outline" onClick={() => {
-                        setShowDetailsModal(false);
-                        openEditModal(selectedTicket);
-                      }}>
-                        Modifier
-                      </Button>
-                      <Button variant="destructive" onClick={() => {
-                        setShowDetailsModal(false);
-                        openDeleteModal(selectedTicket);
-                      }}>
-                        Supprimer
-                      </Button>
-                    </>
-                  )}
+                  <Button
+                    variant={!isValidationAccepted ? "destructive" : "outline"}
+                    onClick={() => setIsValidationAccepted(false)}
+                    className="flex-1"
+                  >
+                    Rejeter
+                  </Button>
                 </div>
               </div>
-            )}
+              {!isValidationAccepted && (
+                <div className="space-y-2">
+                  <Label htmlFor="validation-reason">Motif de rejet *</Label>
+                  <Textarea
+                    id="validation-reason"
+                    placeholder="Expliquez pourquoi la résolution n'est pas satisfaisante..."
+                    value={validationReason}
+                    onChange={(e) => setValidationReason(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowValidateModal(false);
+                  setValidationReason("");
+                  setIsValidationAccepted(true);
+                }}>
+                  Annuler
+                </Button>
+                <Button 
+                  onClick={handleValidate} 
+                  className={isValidationAccepted ? "bg-success hover:bg-success/90" : "bg-destructive hover:bg-destructive/90"}
+                  disabled={!isValidationAccepted && !validationReason.trim()}
+                >
+                  {isValidationAccepted ? "Valider" : "Rejeter"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Resolve Modal */}
+        <Dialog open={showResolveModal} onOpenChange={setShowResolveModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Marquer comme résolu</DialogTitle>
+              <DialogDescription>
+                Remplissez le résumé de la résolution pour le ticket {selectedTicket?.id}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="resolution-summary">Résumé de la résolution *</Label>
+                <Textarea
+                  id="resolution-summary"
+                  placeholder="Décrivez comment vous avez résolu le problème..."
+                  value={resolutionSummary}
+                  onChange={(e) => setResolutionSummary(e.target.value)}
+                  rows={6}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowResolveModal(false);
+                  setResolutionSummary("");
+                }}>
+                  Annuler
+                </Button>
+                <Button 
+                  onClick={handleResolve} 
+                  className="bg-success hover:bg-success/90"
+                  disabled={!resolutionSummary.trim()}
+                >
+                  Marquer résolu
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Take Charge Modal */}
+        <Dialog open={showTakeChargeModal} onOpenChange={setShowTakeChargeModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Prendre en charge</DialogTitle>
+              <DialogDescription>
+                Vous allez commencer à traiter le ticket {selectedTicket?.id}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-info/10 rounded-lg border border-info/20">
+                <p className="text-sm">
+                  Le statut du ticket passera à "En cours" une fois que vous aurez pris en charge.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowTakeChargeModal(false)}>
+                  Annuler
+                </Button>
+                <Button onClick={handleTakeCharge} className="bg-primary hover:bg-primary/90">
+                  Prendre en charge
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Comment Modal */}
+        <Dialog open={showCommentModal} onOpenChange={setShowCommentModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Ajouter un commentaire</DialogTitle>
+              <DialogDescription>
+                Ajoutez un commentaire au ticket {selectedTicket?.id}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="comment-type">Type de commentaire</Label>
+                <Select value={commentType} onValueChange={(v) => setCommentType(v as "public" | "internal")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="public">Public (visible par l'utilisateur)</SelectItem>
+                    <SelectItem value="internal">Interne (visible uniquement par l'équipe)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="comment-content">Commentaire *</Label>
+                <Textarea
+                  id="comment-content"
+                  placeholder="Votre commentaire..."
+                  value={commentContent}
+                  onChange={(e) => setCommentContent(e.target.value)}
+                  rows={6}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowCommentModal(false);
+                  setCommentContent("");
+                  setCommentType("public");
+                }}>
+                  Annuler
+                </Button>
+                <Button 
+                  onClick={handleAddComment} 
+                  className="bg-secondary hover:bg-secondary/90"
+                  disabled={!commentContent.trim()}
+                >
+                  Ajouter
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Request Info Modal */}
+        <Dialog open={showRequestInfoModal} onOpenChange={setShowRequestInfoModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Demander des informations</DialogTitle>
+              <DialogDescription>
+                Demandez des informations complémentaires pour le ticket {selectedTicket?.id}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-info/10 rounded-lg border border-info/20">
+                <p className="text-sm">
+                  Votre demande sera envoyée à l'utilisateur créateur du ticket.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="request-info-content">Demande *</Label>
+                <Textarea
+                  id="request-info-content"
+                  placeholder="Quelles informations avez-vous besoin ?"
+                  value={requestInfoContent}
+                  onChange={(e) => setRequestInfoContent(e.target.value)}
+                  rows={6}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowRequestInfoModal(false);
+                  setRequestInfoContent("");
+                }}>
+                  Annuler
+                </Button>
+                <Button 
+                  onClick={handleRequestInfo} 
+                  className="bg-secondary hover:bg-secondary/90"
+                  disabled={!requestInfoContent.trim()}
+                >
+                  Envoyer
+                </Button>
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useApp } from "@/contexts/AppContext";
 import { KPICard } from "@/components/dashboard/KPICard";
@@ -71,9 +71,10 @@ function UserDashboard() {
   const navigate = useNavigate();
   
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showValidateModal, setShowValidateModal] = useState(false);
+  const [showReopenModal, setShowReopenModal] = useState(false);
   
   // État pour l'édition
   const [editTitle, setEditTitle] = useState("");
@@ -81,6 +82,8 @@ function UserDashboard() {
   const [editType, setEditType] = useState<TicketType>("hardware");
   const [editPriority, setEditPriority] = useState<TicketPriority>("medium");
   const [editCategory, setEditCategory] = useState("");
+  const [validationReason, setValidationReason] = useState("");
+  const [isValidationAccepted, setIsValidationAccepted] = useState(true);
   
   // Les tickets sont déjà filtrés par l'API pour les utilisateurs (getMyTickets)
   // Donc on utilise directement tickets sans re-filtrer
@@ -92,8 +95,7 @@ function UserDashboard() {
   console.log('UserDashboard - Current user:', currentUser?.id, currentUser?.name);
 
   const handleViewDetails = (ticket: Ticket) => {
-    setSelectedTicket(ticket);
-    setShowDetailsModal(true);
+    navigate(`/tickets/${ticket.id}`);
   };
 
   const openEditModal = (ticket: Ticket) => {
@@ -154,7 +156,28 @@ function UserDashboard() {
       }
     } catch (error: any) {
       console.error('Erreur lors de la modification du ticket:', error);
-      toast.error(error.message || "Erreur lors de la modification du ticket");
+      
+      // Gestion des erreurs spécifiques du backend
+      let errorMessage = "Erreur lors de la modification du ticket";
+      if (error.response?.data?.detail) {
+        const detail = error.response.data.detail;
+        if (detail.includes("en cours de traitement")) {
+          // Déterminer un message plus spécifique selon le statut
+          if (selectedTicket?.status === "closed") {
+            errorMessage = "Ce ticket est déjà clôturé. Modification impossible.";
+          } else if (selectedTicket?.status === "resolved") {
+            errorMessage = "Ce ticket est déjà résolu. Modification impossible.";
+          } else if (selectedTicket?.assignedTo || selectedTicket?.status === "assigned" || selectedTicket?.status === "in_progress") {
+            errorMessage = "Ce ticket est déjà assigné. Modification impossible.";
+          } else {
+            errorMessage = "Ce ticket est déjà en cours de traitement. Modification impossible.";
+          }
+        } else {
+          errorMessage = detail;
+        }
+      }
+      
+      toast.error(errorMessage);
     }
   };
 
@@ -175,7 +198,84 @@ function UserDashboard() {
       }
     } catch (error: any) {
       console.error('Erreur lors de la suppression du ticket:', error);
-      toast.error(error.message || "Erreur lors de la suppression du ticket");
+      
+      // Gestion des erreurs spécifiques du backend
+      let errorMessage = "Erreur lors de la suppression du ticket";
+      if (error.response?.data?.detail) {
+        const detail = error.response.data.detail;
+        if (detail.includes("en cours de traitement")) {
+          // Déterminer un message plus spécifique selon le statut
+          if (selectedTicket?.status === "closed") {
+            errorMessage = "Ce ticket est déjà clôturé. Suppression impossible.";
+          } else if (selectedTicket?.status === "resolved") {
+            errorMessage = "Ce ticket est déjà résolu. Suppression impossible.";
+          } else if (selectedTicket?.assignedTo || selectedTicket?.status === "assigned" || selectedTicket?.status === "in_progress") {
+            errorMessage = "Ce ticket est déjà assigné. Suppression impossible.";
+          } else {
+            errorMessage = "Ce ticket est déjà en cours de traitement. Suppression impossible.";
+          }
+        } else {
+          errorMessage = detail;
+        }
+      }
+      
+      toast.error(errorMessage);
+    }
+  };
+
+  const handleValidate = async () => {
+    if (!selectedTicket) return;
+
+    try {
+      const rejectionReason = !isValidationAccepted && validationReason.trim() 
+        ? validationReason 
+        : undefined;
+      
+      const updatedTicket = await ticketsApi.validate(
+        selectedTicket.id,
+        isValidationAccepted,
+        rejectionReason
+      );
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success(isValidationAccepted ? "Résolution validée avec succès" : "Résolution rejetée");
+      setShowValidateModal(false);
+      setSelectedTicket(null);
+      setValidationReason("");
+      setIsValidationAccepted(true);
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la validation:', error);
+      toast.error(error.message || "Erreur lors de la validation");
+    }
+  };
+
+  const handleReopen = async () => {
+    if (!selectedTicket) return;
+
+    try {
+      const updatedTicket = await ticketsApi.reopen(selectedTicket.id);
+      
+      setTickets(prev =>
+        prev.map(t => t.id === selectedTicket.id ? updatedTicket : t)
+      );
+
+      toast.success("Ticket relancé avec succès");
+      setShowReopenModal(false);
+      setSelectedTicket(null);
+      
+      if (currentUser) {
+        await loadData(currentUser);
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de la relance:', error);
+      toast.error(error.message || "Erreur lors de la relance du ticket");
     }
   };
 
@@ -212,8 +312,6 @@ function UserDashboard() {
           value={stats.open}
           icon={Clock}
           iconColor="warning"
-          change="+2 cette semaine"
-          changeType="neutral"
         />
         <KPICard
           title="En cours de traitement"
@@ -226,8 +324,6 @@ function UserDashboard() {
           value={stats.resolved}
           icon={CheckCircle2}
           iconColor="success"
-          change="+5 ce mois"
-          changeType="positive"
         />
       </div>
 
@@ -251,6 +347,14 @@ function UserDashboard() {
                 onView={handleViewDetails}
                 onEdit={openEditModal}
                 onDelete={openDeleteModal}
+                onValidate={(t) => {
+                  setSelectedTicket(t);
+                  setShowValidateModal(true);
+                }}
+                onReopen={(t) => {
+                  setSelectedTicket(t);
+                  setShowReopenModal(true);
+                }}
               />
             ))
           ) : (
@@ -269,223 +373,6 @@ function UserDashboard() {
           )}
         </div>
       </div>
-
-      {/* Details Modal */}
-      <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Détails du ticket</DialogTitle>
-            <DialogDescription>
-              Informations complètes du ticket {selectedTicket?.id}
-            </DialogDescription>
-          </DialogHeader>
-          {selectedTicket && (
-            <div className="space-y-6">
-              {/* Header */}
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <h2 className="text-2xl font-bold mb-2">{selectedTicket.title}</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline" className={cn(
-                      selectedTicket.status === "open" && "bg-info/10 text-info border-info/30",
-                      selectedTicket.status === "assigned" && "bg-secondary/10 text-secondary border-secondary/30",
-                      selectedTicket.status === "in_progress" && "bg-primary/10 text-primary border-primary/30",
-                      selectedTicket.status === "resolved" && "bg-success/10 text-success border-success/30",
-                      selectedTicket.status === "closed" && "bg-muted text-muted-foreground border-muted",
-                      selectedTicket.status === "reopened" && "bg-destructive/10 text-destructive border-destructive/30",
-                    )}>
-                      {selectedTicket.status === "open" && "Ouvert"}
-                      {selectedTicket.status === "assigned" && "Assigné"}
-                      {selectedTicket.status === "in_progress" && "En cours"}
-                      {selectedTicket.status === "resolved" && "Résolu"}
-                      {selectedTicket.status === "closed" && "Fermé"}
-                      {selectedTicket.status === "reopened" && "Relancé"}
-                    </Badge>
-                    <Badge variant="secondary" className={cn(
-                      selectedTicket.priority === "low" && "bg-muted text-muted-foreground",
-                      selectedTicket.priority === "medium" && "bg-info/10 text-info",
-                      selectedTicket.priority === "high" && "bg-warning/10 text-warning",
-                      selectedTicket.priority === "critical" && "bg-destructive/10 text-destructive",
-                    )}>
-                      {selectedTicket.priority === "low" && "Basse"}
-                      {selectedTicket.priority === "medium" && "Moyenne"}
-                      {selectedTicket.priority === "high" && "Haute"}
-                      {selectedTicket.priority === "critical" && "Critique"}
-                    </Badge>
-                    <Badge variant="outline">
-                      {selectedTicket.type === "hardware" ? (
-                        <><Wrench className="h-3 w-3 mr-1" /> Matériel</>
-                      ) : (
-                        <><Monitor className="h-3 w-3 mr-1" /> Applicatif</>
-                      )}
-                    </Badge>
-                    {selectedTicket.category && (
-                      <Badge variant="outline">{selectedTicket.category}</Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Description */}
-              <div className="space-y-2">
-                <h3 className="font-semibold flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  Description
-                </h3>
-                <p className="text-muted-foreground bg-muted/50 p-4 rounded-lg">
-                  {selectedTicket.description}
-                </p>
-              </div>
-
-              {/* Informations */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <User className="h-4 w-4" />
-                    Créé par
-                  </h3>
-                  <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>{selectedTicket.createdBy.avatar}</AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="font-medium">{selectedTicket.createdBy.name}</p>
-                      <p className="text-sm text-muted-foreground">{selectedTicket.createdBy.email}</p>
-                    </div>
-                  </div>
-                </div>
-                {selectedTicket.assignedTo && (
-                  <div className="space-y-2">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <User className="h-4 w-4" />
-                      Assigné à
-                    </h3>
-                    <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback>{selectedTicket.assignedTo.avatar}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-medium">{selectedTicket.assignedTo.name}</p>
-                        <p className="text-sm text-muted-foreground">{selectedTicket.assignedTo.email}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Dates */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <Calendar className="h-4 w-4" />
-                    Dates importantes
-                  </h3>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between p-2 bg-muted/50 rounded">
-                      <span className="text-muted-foreground">Créé le:</span>
-                      <span className="font-medium">{format(selectedTicket.createdAt, "dd/MM/yyyy à HH:mm", { locale: fr })}</span>
-                    </div>
-                    <div className="flex justify-between p-2 bg-muted/50 rounded">
-                      <span className="text-muted-foreground">Modifié le:</span>
-                      <span className="font-medium">{format(selectedTicket.updatedAt, "dd/MM/yyyy à HH:mm", { locale: fr })}</span>
-                    </div>
-                    {selectedTicket.resolvedAt && (
-                      <div className="flex justify-between p-2 bg-muted/50 rounded">
-                        <span className="text-muted-foreground">Résolu le:</span>
-                        <span className="font-medium">{format(selectedTicket.resolvedAt, "dd/MM/yyyy à HH:mm", { locale: fr })}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Résolution */}
-              {selectedTicket.resolution && (
-                <div className="space-y-2">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-success" />
-                    Résolution
-                  </h3>
-                  <p className="text-muted-foreground bg-success/10 p-4 rounded-lg border border-success/20">
-                    {selectedTicket.resolution}
-                  </p>
-                </div>
-              )}
-
-              {/* Raison de rejet */}
-              {selectedTicket.reopenReason && (
-                <div className="space-y-2">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-warning" />
-                    Raison de relance
-                  </h3>
-                  <p className="text-muted-foreground bg-warning/10 p-4 rounded-lg border border-warning/20">
-                    {selectedTicket.reopenReason}
-                  </p>
-                </div>
-              )}
-
-              {/* Commentaires */}
-              {selectedTicket.comments && selectedTicket.comments.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4" />
-                    Commentaires ({selectedTicket.comments.length})
-                  </h3>
-                  <div className="space-y-3 max-h-60 overflow-y-auto">
-                    {selectedTicket.comments.map((comment) => (
-                      <div key={comment.id} className="p-3 bg-muted/50 rounded-lg">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Avatar className="h-6 w-6">
-                              <AvatarFallback className="text-xs">{comment.author.avatar}</AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <p className="font-medium text-sm">{comment.author.name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {format(comment.createdAt, "dd/MM/yyyy à HH:mm", { locale: fr })}
-                              </p>
-                            </div>
-                          </div>
-                          {comment.isInternal && (
-                            <Badge variant="outline" className="text-xs">Interne</Badge>
-                          )}
-                        </div>
-                        <p className="text-sm">{comment.content}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => setShowDetailsModal(false)}>
-                  Fermer
-                </Button>
-                {currentUser?.id === selectedTicket.createdBy.id && 
-                 selectedTicket.status === "open" && 
-                 !selectedTicket.assignedTo && (
-                  <>
-                    <Button variant="outline" onClick={() => {
-                      setShowDetailsModal(false);
-                      openEditModal(selectedTicket);
-                    }}>
-                      Modifier
-                    </Button>
-                    <Button variant="destructive" onClick={() => {
-                      setShowDetailsModal(false);
-                      openDeleteModal(selectedTicket);
-                    }}>
-                      Supprimer
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Edit Modal */}
       <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
@@ -575,6 +462,100 @@ function UserDashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Validate Modal */}
+      <Dialog open={showValidateModal} onOpenChange={setShowValidateModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Valider la résolution</DialogTitle>
+            <DialogDescription>
+              Votre ticket {selectedTicket?.id} a été résolu. Validez-vous la résolution ?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {selectedTicket?.resolution && (
+              <div className="p-4 bg-success/10 rounded-lg border border-success/20">
+                <p className="font-medium mb-2">Résumé de la résolution:</p>
+                <p className="text-sm">{selectedTicket.resolution}</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Action</Label>
+              <div className="flex gap-4">
+                <Button
+                  variant={isValidationAccepted ? "default" : "outline"}
+                  onClick={() => setIsValidationAccepted(true)}
+                  className="flex-1"
+                >
+                  Valider
+                </Button>
+                <Button
+                  variant={!isValidationAccepted ? "destructive" : "outline"}
+                  onClick={() => setIsValidationAccepted(false)}
+                  className="flex-1"
+                >
+                  Rejeter
+                </Button>
+              </div>
+            </div>
+            {!isValidationAccepted && (
+              <div className="space-y-2">
+                <Label htmlFor="validation-reason">Motif de rejet *</Label>
+                <Textarea
+                  id="validation-reason"
+                  placeholder="Expliquez pourquoi la résolution n'est pas satisfaisante..."
+                  value={validationReason}
+                  onChange={(e) => setValidationReason(e.target.value)}
+                  rows={4}
+                />
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => {
+                setShowValidateModal(false);
+                setValidationReason("");
+                setIsValidationAccepted(true);
+              }}>
+                Annuler
+              </Button>
+              <Button 
+                onClick={handleValidate} 
+                className={isValidationAccepted ? "bg-success hover:bg-success/90" : "bg-destructive hover:bg-destructive/90"}
+                disabled={!isValidationAccepted && !validationReason.trim()}
+              >
+                {isValidationAccepted ? "Valider" : "Rejeter"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reopen Modal */}
+      <Dialog open={showReopenModal} onOpenChange={setShowReopenModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Relancer le ticket</DialogTitle>
+            <DialogDescription>
+              Votre ticket {selectedTicket?.id} sera relancé et remis en attente d'analyse.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-4 bg-warning/10 rounded-lg border border-warning/20">
+              <p className="text-sm">
+                Vous pourrez relancer votre ticket s'il a été clôturé automatiquement dans les 7 derniers jours.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowReopenModal(false)}>
+                Annuler
+              </Button>
+              <Button onClick={handleReopen} className="bg-warning hover:bg-warning/90">
+                Relancer
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Modal */}
       <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
         <DialogContent>
@@ -650,7 +631,7 @@ function DSIDashboard() {
           iconColor="info"
         />
         <KPICard
-          title="Relancés"
+          title="Rejetés"
           value={stats.reopened}
           icon={RotateCcw}
           iconColor="destructive"

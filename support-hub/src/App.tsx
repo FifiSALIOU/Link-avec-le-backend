@@ -9,6 +9,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import TicketsPage from "./pages/TicketsPage";
 import NewTicketPage from "./pages/NewTicketPage";
+import TicketDetailsPage from "./pages/TicketDetailsPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import TeamPage from "./pages/TeamPage";
 import StatsPage from "./pages/StatsPage";
@@ -67,6 +68,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <NewTicketPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/tickets/:id"
+        element={
+          <ProtectedRoute>
+            <TicketDetailsPage />
           </ProtectedRoute>
         }
       />

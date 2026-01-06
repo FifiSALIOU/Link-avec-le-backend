@@ -18,6 +18,11 @@ import {
   RotateCcw,
   Edit,
   Trash2,
+  AlertCircle,
+  TrendingUp,
+  RefreshCw,
+  MessageSquare,
+  Info,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -27,26 +32,33 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useApp } from "@/contexts/AppContext";
+import { useNavigate } from "react-router-dom";
 
 interface TicketCardProps {
   ticket: Ticket;
   onView?: (ticket: Ticket) => void;
   onAssign?: (ticket: Ticket) => void;
+  onReassign?: (ticket: Ticket) => void;
   onDelegate?: (ticket: Ticket) => void;
+  onEscalate?: (ticket: Ticket) => void;
   onResolve?: (ticket: Ticket) => void;
+  onValidate?: (ticket: Ticket) => void;
   onReopen?: (ticket: Ticket) => void;
   onEdit?: (ticket: Ticket) => void;
   onDelete?: (ticket: Ticket) => void;
+  onTakeCharge?: (ticket: Ticket) => void;
+  onAddComment?: (ticket: Ticket) => void;
+  onRequestInfo?: (ticket: Ticket) => void;
 }
 
 const statusConfig: Record<TicketStatus, { label: string; className: string }> = {
-  open: { label: "Ouvert", className: "bg-info/10 text-info border-info/30" },
-  assigned: { label: "Assigné", className: "bg-secondary/10 text-secondary border-secondary/30" },
+  open: { label: "En attente d'assignation", className: "bg-info/10 text-info border-info/30" },
+  assigned: { label: "Assigné au technicien", className: "bg-secondary/10 text-secondary border-secondary/30" },
   delegated: { label: "Délégué", className: "bg-warning/10 text-warning border-warning/30" },
   in_progress: { label: "En cours", className: "bg-primary/10 text-primary border-primary/30" },
   resolved: { label: "Résolu", className: "bg-success/10 text-success border-success/30" },
-  closed: { label: "Fermé", className: "bg-muted text-muted-foreground border-muted" },
-  reopened: { label: "Relancé", className: "bg-destructive/10 text-destructive border-destructive/30" },
+  closed: { label: "Cloturé", className: "bg-muted text-muted-foreground border-muted" },
+  reopened: { label: "Rejeté", className: "bg-destructive/10 text-destructive border-destructive/30" },
 };
 
 const priorityConfig: Record<TicketPriority, { label: string; className: string }> = {
@@ -60,23 +72,48 @@ export function TicketCard({
   ticket,
   onView,
   onAssign,
+  onReassign,
   onDelegate,
+  onEscalate,
   onResolve,
+  onValidate,
   onReopen,
   onEdit,
   onDelete,
+  onTakeCharge,
+  onAddComment,
+  onRequestInfo,
 }: TicketCardProps) {
   const { currentUser } = useApp();
+  const navigate = useNavigate();
   const status = statusConfig[ticket.status];
   const priority = priorityConfig[ticket.priority];
 
   const isCreator = currentUser?.id === ticket.createdBy.id;
-  const canEditOrDelete = isCreator && ticket.status === "open" && !ticket.assignedTo;
+  const isAssignedTechnician = ticket.assignedTo?.id === currentUser?.id;
   
-  const showAssign = currentUser?.role === "dsi" || currentUser?.role === "adjoint";
-  const showDelegate = currentUser?.role === "dsi";
-  const showResolve = currentUser?.role === "technician" && ticket.assignedTo?.id === currentUser.id;
-  const showValidate = currentUser?.role === "user" && ticket.status === "resolved";
+  // Actions pour l'utilisateur créateur selon le statut du ticket
+  // Le backend gérera les restrictions réelles
+  const isUserRole = currentUser?.role === "user";
+  const canViewDetails = isCreator; // Toujours disponible pour le créateur
+  const canEdit = isCreator; // Toujours visible, backend bloquera si nécessaire
+  const canDelete = isCreator; // Toujours visible, backend bloquera si nécessaire
+  const canValidate = isCreator && ticket.status === "resolved"; // Uniquement si résolu
+  const canRelance = isCreator && ticket.status === "resolved"; // Rejeter et relancer si résolu
+  
+  // Conditions pour chaque action selon le rôle et le statut (pour autres rôles)
+  const canAssign = (currentUser?.role === "dsi" || currentUser?.role === "adjoint" || currentUser?.role === "admin") 
+    && (ticket.status === "open" || ticket.status === "delegated");
+  const canReassign = (currentUser?.role === "dsi" || currentUser?.role === "adjoint" || currentUser?.role === "admin")
+    && ticket.assignedTo && (ticket.status === "assigned" || ticket.status === "in_progress");
+  const canDelegate = currentUser?.role === "dsi" && (ticket.status === "open" || ticket.status === "delegated");
+  const canEscalate = (currentUser?.role === "adjoint" || currentUser?.role === "dsi" || currentUser?.role === "admin")
+    && ticket.status !== "closed" && ticket.status !== "resolved";
+  const canResolve = isAssignedTechnician && (ticket.status === "assigned" || ticket.status === "in_progress");
+  const canReopen = isCreator && ticket.status === "closed";
+  const canTakeCharge = isAssignedTechnician && ticket.status === "assigned";
+  // Les commentaires sont gérés via la modal de détails, pas directement depuis la card
+  const canRequestInfo = isAssignedTechnician && (ticket.status === "assigned" || ticket.status === "in_progress");
 
   return (
     <div className="group relative overflow-hidden rounded-xl bg-card border border-border/50 p-5 shadow-card transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
@@ -165,13 +202,16 @@ export function TicketCard({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => onView?.(ticket)}>
+            <DropdownMenuItem onClick={() => navigate(`/tickets/${ticket.id}`)}>
               <Eye className="h-4 w-4 mr-2" />
               Voir détails
             </DropdownMenuItem>
-            {canEditOrDelete && (
+            
+            {/* Actions Utilisateur (créateur) - Uniquement pour les utilisateurs normaux */}
+            {isUserRole && isCreator && (
               <>
                 <DropdownMenuSeparator />
+                {/* Modifier et Supprimer : toujours visibles, backend gère les restrictions */}
                 <DropdownMenuItem onClick={() => onEdit?.(ticket)}>
                   <Edit className="h-4 w-4 mr-2" />
                   Modifier
@@ -180,43 +220,81 @@ export function TicketCard({
                   <Trash2 className="h-4 w-4 mr-2" />
                   Supprimer
                 </DropdownMenuItem>
+                
+                {/* Valider et Relancer : uniquement si résolu */}
+                {ticket.status === "resolved" && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onValidate?.(ticket)} className="text-success">
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Valider
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onReopen?.(ticket)} className="text-warning">
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Rejeter et relancer
+                    </DropdownMenuItem>
+                  </>
+                )}
               </>
             )}
-            {showAssign && ticket.status === "open" && (
+
+            {/* Actions DSI/Adjoint/Admin - Uniquement si l'utilisateur est DSI, Adjoint ou Admin */}
+            {(currentUser?.role === "dsi" || currentUser?.role === "adjoint" || currentUser?.role === "admin") && (
               <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onAssign?.(ticket)}>
-                  <UserPlus className="h-4 w-4 mr-2" />
-                  Assigner
-                </DropdownMenuItem>
+                {canAssign && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onAssign?.(ticket)}>
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Assigner
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {canReassign && (
+                  <DropdownMenuItem onClick={() => onReassign?.(ticket)}>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Réassigner
+                  </DropdownMenuItem>
+                )}
+                {canDelegate && (
+                  <DropdownMenuItem onClick={() => onDelegate?.(ticket)}>
+                    <Forward className="h-4 w-4 mr-2" />
+                    Déléguer à Adjoint DSI
+                  </DropdownMenuItem>
+                )}
+                {canEscalate && (
+                  <DropdownMenuItem onClick={() => onEscalate?.(ticket)} className="text-warning">
+                    <TrendingUp className="h-4 w-4 mr-2" />
+                    Escalader la priorité
+                  </DropdownMenuItem>
+                )}
               </>
             )}
-            {showDelegate && ticket.status === "open" && (
-              <DropdownMenuItem onClick={() => onDelegate?.(ticket)}>
-                <Forward className="h-4 w-4 mr-2" />
-                Déléguer
-              </DropdownMenuItem>
-            )}
-            {showResolve && ticket.status === "in_progress" && (
+
+            {/* Actions Technicien - Uniquement si l'utilisateur est technicien */}
+            {currentUser?.role === "technician" && (
               <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onResolve?.(ticket)} className="text-success">
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Marquer résolu
-                </DropdownMenuItem>
-              </>
-            )}
-            {showValidate && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onResolve?.(ticket)} className="text-success">
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Valider
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onReopen?.(ticket)} className="text-warning">
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                  Relancer
-                </DropdownMenuItem>
+                {canTakeCharge && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onTakeCharge?.(ticket)} className="text-primary">
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Prendre en charge
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {canResolve && (
+                  <DropdownMenuItem onClick={() => onResolve?.(ticket)} className="text-success">
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Marquer résolu
+                  </DropdownMenuItem>
+                )}
+                {canRequestInfo && (
+                  <DropdownMenuItem onClick={() => onRequestInfo?.(ticket)}>
+                    <Info className="h-4 w-4 mr-2" />
+                    Demander des informations
+                  </DropdownMenuItem>
+                )}
               </>
             )}
           </DropdownMenuContent>

@@ -145,6 +145,71 @@ export const ticketsApi = {
     return mapTicket(response);
   },
 
+  reassign: async (id: string, technicianId: string, reason?: string, notes?: string): Promise<Ticket> => {
+    const response = await apiClient.put<any>(`/tickets/${id}/reassign`, {
+      technician_id: technicianId,
+      reason,
+      notes,
+    });
+    return mapTicket(response);
+  },
+
+  escalate: async (id: string): Promise<Ticket> => {
+    const response = await apiClient.put<any>(`/tickets/${id}/escalate`);
+    return mapTicket(response);
+  },
+
+  updateStatus: async (id: string, status: string, resolutionSummary?: string, rejectionReason?: string): Promise<Ticket> => {
+    // Mapper les statuts frontend vers backend
+    const statusMap: Record<string, string> = {
+      'open': 'en_attente_analyse',
+      'assigned': 'assigne_technicien',
+      'in_progress': 'en_cours',
+      'resolved': 'resolu',
+      'closed': 'cloture',
+      'reopened': 'rejete',
+    };
+    const backendStatus = statusMap[status] || status;
+    
+    const response = await apiClient.put<any>(`/tickets/${id}/status`, {
+      status: backendStatus,
+      resolution_summary: resolutionSummary,
+      rejection_reason: rejectionReason,
+    });
+    return mapTicket(response);
+  },
+
+  addComment: async (id: string, content: string, type: 'public' | 'internal' = 'public'): Promise<any> => {
+    const response = await apiClient.post<any>(`/tickets/${id}/comments`, {
+      content,
+      type,
+    });
+    return response;
+  },
+
+  getComments: async (id: string): Promise<any[]> => {
+    const response = await apiClient.get<any[]>(`/tickets/${id}/comments`);
+    return response;
+  },
+
+  getHistory: async (id: string): Promise<any[]> => {
+    const response = await apiClient.get<any[]>(`/tickets/${id}/history`);
+    return response;
+  },
+
+  acceptAssignment: async (id: string): Promise<Ticket> => {
+    const response = await apiClient.put<any>(`/tickets/${id}/accept-assignment`);
+    return mapTicket(response);
+  },
+
+  rejectAssignment: async (id: string, reason?: string): Promise<Ticket> => {
+    const url = reason 
+      ? `/tickets/${id}/reject-assignment?reason=${encodeURIComponent(reason)}`
+      : `/tickets/${id}/reject-assignment`;
+    const response = await apiClient.put<any>(url);
+    return mapTicket(response);
+  },
+
   reopen: async (id: string, technicianId?: string, reason?: string, notes?: string): Promise<Ticket> => {
     // Si technicianId est fourni, utiliser l'endpoint pour réassigner
     if (technicianId) {
